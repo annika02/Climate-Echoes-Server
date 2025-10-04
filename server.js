@@ -8,7 +8,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: 'http://localhost:5173', // Update to your deployed frontend URL in production
   methods: ['GET', 'POST', 'PATCH'],
   allowedHeaders: ['Content-Type'],
 }));
@@ -186,7 +186,7 @@ app.post('/api/questions', validateQuestion, async (req, res) => {
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
   }
-  const question = new Question({ // Fixed: Changed 'new Post' to 'new Question'
+  const question = new Question({
     question: req.body.question,
     author: req.body.author && req.body.author.trim() !== '' ? req.body.author.trim() : 'Anonymous',
     date: new Date(),
@@ -269,19 +269,5 @@ app.get('/api/questions/:id', async (req, res) => {
   }
 });
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI, {
-  serverSelectionTimeoutMS: 5000,
-  heartbeatFrequencyMS: 10000,
-})
-  .then(() => {
-    console.log('Connected to MongoDB');
-    const PORT = process.env.PORT || 5000;
-    app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
-  })
-  .catch(err => {
-    console.error('MongoDB connection error:', err);
-    process.exit(1);
-  });
-
-  module.exports = app;
+// Export for Vercel (no app.listen)
+module.exports = app;

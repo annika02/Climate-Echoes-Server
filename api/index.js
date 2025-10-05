@@ -6,40 +6,60 @@ require('dotenv').config();
 
 const app = express();
 
-const url = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ltlwpj2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+const url = process.env.MONGODB_URI || `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ltlwpj2.mongodb.net/climate_echoes?retryWrites=true&w=majority&appName=Cluster0`;
 
 mongoose.connect(url, {
-  serverSelectionTimeoutMS: 5000,
-  maxPoolSize: 10, // Allow more concurrent connections
-  socketTimeoutMS: 45000, // Increase socket timeout
-});
+  serverSelectionTimeoutMS: 10000,
+  maxPoolSize: 10,
+  socketTimeoutMS: 45000,
+  connectTimeoutMS: 30000,
+}).catch(err => console.error('❌ Initial MongoDB connection error:', err));
 
 const db = mongoose.connection;
 db.on('error', (err) => console.error('❌ MongoDB connection error:', err));
 db.once('open', () => console.log('✅ Connected to MongoDB'));
 db.on('disconnected', () => console.warn('⚠️ MongoDB disconnected, attempting to reconnect...'));
 
-// Optional: Middleware to check DB connection before handling requests
-app.use((req, res, next) => {
-  if (mongoose.connection.readyState !== 1) {
-    return res.status(503).json({ message: 'Service unavailable: Database not connected' });
+app.use(async (req, res, next) => {
+  if (mongoose.connection.readyState === 1) {
+    return next();
   }
-  next();
+  try {
+    await mongoose.connect(url, {
+      serverSelectionTimeoutMS: 10000,
+      maxPoolSize: 10,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 30000,
+    });
+    console.log('✅ Reconnected to MongoDB');
+    next();
+  } catch (err) {
+    console.error('❌ Failed to reconnect to MongoDB:', err);
+    res.status(503).json({ message: 'Service unavailable: Database not connected' });
+  }
 });
+
 // Root route
 app.get('/', (req, res) => {
   res.send('Welcome to Climate Echoes Server');
 });
 
-// Middleware
+// CORS
+const allowedOrigins = ['http://localhost:5173', 'https://climate-echoes.vercel.app'];
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PATCH'],
   allowedHeaders: ['Content-Type'],
 }));
 app.use(express.json());
 
-// Input validation middleware (unchanged)
+// Input validation middleware
 const validatePost = [
   body('title').trim().notEmpty().withMessage('Title is required'),
   body('content').trim().notEmpty().withMessage('Content is required'),
@@ -61,7 +81,7 @@ const validateAnswer = [
   body('author').optional().isString().withMessage('Author must be a string'),
 ];
 
-// Global error handling middleware
+// Global error handling
 app.use((err, req, res, next) => {
   console.error('Server Error:', {
     message: err.message,
@@ -75,7 +95,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Define Post Schema and Model
+// Post Schema
 const postSchema = new mongoose.Schema({
   title: { type: String, required: [true, 'Title is required'] },
   content: { type: String, required: [true, 'Content is required'] },
@@ -87,14 +107,14 @@ const postSchema = new mongoose.Schema({
     author: { type: String, default: 'Anonymous', required: true },
     text: { type: String, required: true },
     date: { type: Date, default: Date.now, required: true },
-    parentId: { type: mongoose.Schema.Types.ObjectId, default: null }
+    parentId: { type: mongoose.Schema.Types.ObjectId, default: null },
   }],
   category: { type: String, default: 'User Post' },
-  readTime: { type: String, default: '3 min read' }
+  readTime: { type: String, default: '3 min read' },
 });
 const Post = mongoose.model('Post', postSchema);
 
-// Define Question Schema and Model
+// Question Schema
 const questionSchema = new mongoose.Schema({
   question: { type: String, required: [true, 'Question is required'] },
   author: { type: String, required: [true, 'Author is required'], default: 'Anonymous' },
@@ -105,21 +125,41 @@ const questionSchema = new mongoose.Schema({
   answersList: [{
     author: { type: String, default: 'Anonymous', required: true },
     text: { type: String, required: true },
-    date: { type: Date, default: Date.now, required: true }
+    date: { type: Date, default: Date.now, required: true },
   }],
   comments: [{
     author: { type: String, default: 'Anonymous', required: true },
     text: { type: String, required: true },
     date: { type: Date, default: Date.now, required: true },
-    parentId: { type: mongoose.Schema.Types.ObjectId, default: null }
-  }]
+    parentId: { type: mongoose.Schema.Types.ObjectId, default: null },
+  }],
 });
 const Question = mongoose.model('Question', questionSchema);
 
-// API Routes (unchanged)
+// API Routes
+app.get('/api/test-db', async (req, res) => {
+  try {
+    const readyState = mongoose.connection.readyState;
+    if (readyState !== 1) {
+      await mongoose.connect(url, {
+        serverSelectionTimeoutMS: 10000,
+        maxPoolSize: 10,
+        socketTimeoutMS: 45000,
+        connectTimeoutMS: 30000,
+      });
+    }
+    res.json({ message: 'Database connection test', readyState: mongoose.connection.readyState });
+  } catch (err) {
+    res.status(500).json({ message: 'Database connection failed', error: err.message });
+  }
+});
+
 app.get('/api/posts', async (req, res) => {
   try {
-    const posts = await Post.find();
+    console.log('Fetching posts...');
+    const startTime = Date.now();
+    const posts = await Post.find().lean().exec();
+    console.log(`Fetched ${posts.length} posts in ${Date.now() - startTime}ms`);
     res.json(posts);
   } catch (err) {
     console.error('Error in GET /api/posts:', err);
@@ -141,7 +181,7 @@ app.post('/api/posts', validatePost, async (req, res) => {
     likes: 0,
     comments: [],
     category: 'User Post',
-    readTime: '3 min read'
+    readTime: '3 min read',
   });
   try {
     const newPost = await post.save();
@@ -175,7 +215,7 @@ app.patch('/api/posts/:id/comment', validateComment, async (req, res) => {
       author: req.body.author && req.body.author.trim() !== '' ? req.body.author.trim() : 'Anonymous',
       text: req.body.text,
       date: new Date(),
-      parentId: req.body.parentId || null
+      parentId: req.body.parentId || null,
     });
     const updatedPost = await post.save();
     res.json(updatedPost);
@@ -198,7 +238,7 @@ app.get('/api/posts/:id', async (req, res) => {
 
 app.get('/api/questions', async (req, res) => {
   try {
-    const questions = await Question.find();
+    const questions = await Question.find().lean().exec();
     res.json(questions);
   } catch (err) {
     console.error('Error in GET /api/questions:', err);
@@ -219,7 +259,7 @@ app.post('/api/questions', validateQuestion, async (req, res) => {
     votes: 0,
     tags: ['New'],
     answersList: [],
-    comments: []
+    comments: [],
   });
   try {
     const newQuestion = await question.save();
@@ -253,7 +293,7 @@ app.patch('/api/questions/:id/answer', validateAnswer, async (req, res) => {
     question.answersList.push({
       author: req.body.author && req.body.author.trim() !== '' ? req.body.author.trim() : 'Anonymous',
       text: req.body.text,
-      date: new Date()
+      date: new Date(),
     });
     const updatedQuestion = await question.save();
     res.json(updatedQuestion);
@@ -273,7 +313,7 @@ app.patch('/api/questions/:id/comment', validateComment, async (req, res) => {
       author: req.body.author && req.body.author.trim() !== '' ? req.body.author.trim() : 'Anonymous',
       text: req.body.text,
       date: new Date(),
-      parentId: req.body.parentId || null
+      parentId: req.body.parentId || null,
     });
     const updatedQuestion = await question.save();
     res.json(updatedQuestion);
@@ -294,11 +334,9 @@ app.get('/api/questions/:id', async (req, res) => {
   }
 });
 
-// Local development server (remove or comment out for Vercel)
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
 }
 
-// Export for Vercel
 module.exports = app;

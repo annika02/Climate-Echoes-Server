@@ -8,11 +8,24 @@ const app = express();
 
 const url = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ltlwpj2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
-// Connect asynchronously
 mongoose.connect(url, {
-  serverSelectionTimeoutMS: 5000, // Reduced for faster failure detection
-}).catch(err => console.error('❌ MongoDB connection error:', err.message));
+  serverSelectionTimeoutMS: 5000,
+  maxPoolSize: 10, // Allow more concurrent connections
+  socketTimeoutMS: 45000, // Increase socket timeout
+});
 
+const db = mongoose.connection;
+db.on('error', (err) => console.error('❌ MongoDB connection error:', err));
+db.once('open', () => console.log('✅ Connected to MongoDB'));
+db.on('disconnected', () => console.warn('⚠️ MongoDB disconnected, attempting to reconnect...'));
+
+// Optional: Middleware to check DB connection before handling requests
+app.use((req, res, next) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ message: 'Service unavailable: Database not connected' });
+  }
+  next();
+});
 // Root route
 app.get('/', (req, res) => {
   res.send('Welcome to Climate Echoes Server');

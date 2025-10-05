@@ -1,3 +1,4 @@
+// api/index.js
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -6,28 +7,34 @@ require('dotenv').config();
 
 const app = express();
 
-const url = process.env.MONGODB_URI;
-mongoose.connect(url, {
-  serverSelectionTimeoutMS: 5000,
-  maxPoolSize: 10, // Allow more concurrent connections
-  socketTimeoutMS: 45000, // Increase socket timeout
-});
+// Serverless-friendly MongoDB connection
+let cached = global.mongoose;
+if (!cached) cached = global.mongoose = { conn: null, promise: null };
 
-const db = mongoose.connection;
-db.on('error', (err) => console.error('❌ MongoDB connection error:', err));
-db.once('open', () => console.log('✅ Connected to MongoDB'));
-db.on('disconnected', () => console.warn('⚠️ MongoDB disconnected, attempting to reconnect...'));
+async function connectToDatabase() {
+  if (cached.conn) return cached.conn;
+  if (!cached.promise) {
+    cached.promise = mongoose.connect(process.env.MONGODB_URI, {
+      serverSelectionTimeoutMS: 5000,
+      maxPoolSize: 10,
+      socketTimeoutMS: 45000,
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    }).then((m) => m);
+  }
+  cached.conn = await cached.promise;
+  return cached.conn;
+}
 
-// Optional: Middleware to check DB connection before handling requests
-app.use((req, res, next) => {
-  if (mongoose.connection.readyState !== 1) {
+// Middleware to ensure DB is connected
+app.use(async (req, res, next) => {
+  try {
+    await connectToDatabase();
+    next();
+  } catch (err) {
+    console.error('❌ MongoDB connection error:', err);
     return res.status(503).json({ message: 'Service unavailable: Database not connected' });
   }
-  next();
-});
-// Root route
-app.get('/', (req, res) => {
-  res.send('Welcome to Climate Echoes Server');
 });
 
 // Middleware
@@ -38,7 +45,7 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Input validation middleware (unchanged)
+// Validation middlewares
 const validatePost = [
   body('title').trim().notEmpty().withMessage('Title is required'),
   body('content').trim().notEmpty().withMessage('Content is required'),
@@ -60,93 +67,85 @@ const validateAnswer = [
   body('author').optional().isString().withMessage('Author must be a string'),
 ];
 
-// Global error handling middleware
+// Global error handler
 app.use((err, req, res, next) => {
-  console.error('Server Error:', {
-    message: err.message,
-    stack: err.stack,
-    endpoint: req.path,
-    method: req.method,
-  });
+  console.error('Server Error:', err);
   res.status(500).json({
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? err.message : undefined,
   });
 });
 
-// Define Post Schema and Model
+// Schemas
 const postSchema = new mongoose.Schema({
-  title: { type: String, required: [true, 'Title is required'] },
-  content: { type: String, required: [true, 'Content is required'] },
-  excerpt: { type: String, required: [true, 'Excerpt is required'] },
-  author: { type: String, required: [true, 'Author is required'], default: 'Anonymous' },
-  date: { type: Date, default: Date.now, required: true },
+  title: { type: String, required: true },
+  content: { type: String, required: true },
+  excerpt: { type: String, required: true },
+  author: { type: String, default: 'Anonymous', required: true },
+  date: { type: Date, default: Date.now },
   likes: { type: Number, default: 0 },
   comments: [{
     author: { type: String, default: 'Anonymous', required: true },
     text: { type: String, required: true },
-    date: { type: Date, default: Date.now, required: true },
-    parentId: { type: mongoose.Schema.Types.ObjectId, default: null }
+    date: { type: Date, default: Date.now },
+    parentId: { type: mongoose.Schema.Types.ObjectId, default: null },
   }],
   category: { type: String, default: 'User Post' },
-  readTime: { type: String, default: '3 min read' }
+  readTime: { type: String, default: '3 min read' },
 });
-const Post = mongoose.model('Post', postSchema);
+const Post = mongoose.models.Post || mongoose.model('Post', postSchema);
 
-// Define Question Schema and Model
 const questionSchema = new mongoose.Schema({
-  question: { type: String, required: [true, 'Question is required'] },
-  author: { type: String, required: [true, 'Author is required'], default: 'Anonymous' },
-  date: { type: Date, default: Date.now, required: true },
+  question: { type: String, required: true },
+  author: { type: String, default: 'Anonymous', required: true },
+  date: { type: Date, default: Date.now },
   answers: { type: Number, default: 0 },
   votes: { type: Number, default: 0 },
   tags: [{ type: String }],
   answersList: [{
     author: { type: String, default: 'Anonymous', required: true },
     text: { type: String, required: true },
-    date: { type: Date, default: Date.now, required: true }
+    date: { type: Date, default: Date.now },
   }],
   comments: [{
     author: { type: String, default: 'Anonymous', required: true },
     text: { type: String, required: true },
-    date: { type: Date, default: Date.now, required: true },
-    parentId: { type: mongoose.Schema.Types.ObjectId, default: null }
-  }]
+    date: { type: Date, default: Date.now },
+    parentId: { type: mongoose.Schema.Types.ObjectId, default: null },
+  }],
 });
-const Question = mongoose.model('Question', questionSchema);
+const Question = mongoose.models.Question || mongoose.model('Question', questionSchema);
 
-// API Routes (unchanged)
+// Routes
+
+// Root
+app.get('/', (req, res) => res.send('Welcome to Climate Echoes Server'));
+
+// Posts
 app.get('/api/posts', async (req, res) => {
   try {
     const posts = await Post.find();
     res.json(posts);
   } catch (err) {
-    console.error('Error in GET /api/posts:', err);
     res.status(500).json({ message: 'Failed to fetch posts', error: err.message });
   }
 });
 
 app.post('/api/posts', validatePost, async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
   const post = new Post({
     title: req.body.title,
     content: req.body.content,
     excerpt: req.body.content.substring(0, 150) + (req.body.content.length > 150 ? '...' : ''),
-    author: req.body.author && req.body.author.trim() !== '' ? req.body.author.trim() : 'Anonymous',
-    date: new Date(),
-    likes: 0,
-    comments: [],
-    category: 'User Post',
-    readTime: '3 min read'
+    author: req.body.author?.trim() || 'Anonymous',
   });
+
   try {
     const newPost = await post.save();
     res.status(201).json(newPost);
   } catch (err) {
-    console.error('Error in POST /api/posts:', err);
     res.status(400).json({ message: 'Failed to create post', error: err.message });
   }
 });
@@ -159,7 +158,6 @@ app.patch('/api/posts/:id/like', async (req, res) => {
     const updatedPost = await post.save();
     res.json(updatedPost);
   } catch (err) {
-    console.error('Error in PATCH /api/posts/:id/like:', err);
     res.status(400).json({ message: err.message });
   }
 });
@@ -167,19 +165,20 @@ app.patch('/api/posts/:id/like', async (req, res) => {
 app.patch('/api/posts/:id/comment', validateComment, async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
   try {
     const post = await Post.findById(req.params.id);
     if (!post) return res.status(404).json({ message: 'Post not found' });
+
     post.comments.push({
-      author: req.body.author && req.body.author.trim() !== '' ? req.body.author.trim() : 'Anonymous',
+      author: req.body.author?.trim() || 'Anonymous',
       text: req.body.text,
-      date: new Date(),
-      parentId: req.body.parentId || null
+      parentId: req.body.parentId || null,
     });
+
     const updatedPost = await post.save();
     res.json(updatedPost);
   } catch (err) {
-    console.error('Error in PATCH /api/posts/:id/comment:', err);
     res.status(400).json({ message: err.message });
   }
 });
@@ -190,41 +189,34 @@ app.get('/api/posts/:id', async (req, res) => {
     if (!post) return res.status(404).json({ message: 'Post not found' });
     res.json(post);
   } catch (err) {
-    console.error('Error in GET /api/posts/:id:', err);
     res.status(500).json({ message: err.message });
   }
 });
 
+// Questions
 app.get('/api/questions', async (req, res) => {
   try {
     const questions = await Question.find();
     res.json(questions);
   } catch (err) {
-    console.error('Error in GET /api/questions:', err);
     res.status(500).json({ message: 'Failed to fetch questions', error: err.message });
   }
 });
 
 app.post('/api/questions', validateQuestion, async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ errors: errors.array() });
-  }
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
   const question = new Question({
     question: req.body.question,
-    author: req.body.author && req.body.author.trim() !== '' ? req.body.author.trim() : 'Anonymous',
-    date: new Date(),
-    answers: 0,
-    votes: 0,
+    author: req.body.author?.trim() || 'Anonymous',
     tags: ['New'],
-    answersList: [],
-    comments: []
   });
+
   try {
     const newQuestion = await question.save();
     res.status(201).json(newQuestion);
   } catch (err) {
-    console.error('Error in POST /api/questions:', err);
     res.status(400).json({ message: 'Failed to create question', error: err.message });
   }
 });
@@ -237,7 +229,6 @@ app.patch('/api/questions/:id/vote', async (req, res) => {
     const updatedQuestion = await question.save();
     res.json(updatedQuestion);
   } catch (err) {
-    console.error('Error in PATCH /api/questions/:id/vote:', err);
     res.status(400).json({ message: err.message });
   }
 });
@@ -245,19 +236,20 @@ app.patch('/api/questions/:id/vote', async (req, res) => {
 app.patch('/api/questions/:id/answer', validateAnswer, async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
   try {
     const question = await Question.findById(req.params.id);
     if (!question) return res.status(404).json({ message: 'Question not found' });
+
     question.answers += 1;
     question.answersList.push({
-      author: req.body.author && req.body.author.trim() !== '' ? req.body.author.trim() : 'Anonymous',
+      author: req.body.author?.trim() || 'Anonymous',
       text: req.body.text,
-      date: new Date()
     });
+
     const updatedQuestion = await question.save();
     res.json(updatedQuestion);
   } catch (err) {
-    console.error('Error in PATCH /api/questions/:id/answer:', err);
     res.status(400).json({ message: err.message });
   }
 });
@@ -265,19 +257,20 @@ app.patch('/api/questions/:id/answer', validateAnswer, async (req, res) => {
 app.patch('/api/questions/:id/comment', validateComment, async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
   try {
     const question = await Question.findById(req.params.id);
     if (!question) return res.status(404).json({ message: 'Question not found' });
+
     question.comments.push({
-      author: req.body.author && req.body.author.trim() !== '' ? req.body.author.trim() : 'Anonymous',
+      author: req.body.author?.trim() || 'Anonymous',
       text: req.body.text,
-      date: new Date(),
-      parentId: req.body.parentId || null
+      parentId: req.body.parentId || null,
     });
+
     const updatedQuestion = await question.save();
     res.json(updatedQuestion);
   } catch (err) {
-    console.error('Error in PATCH /api/questions/:id/comment:', err);
     res.status(400).json({ message: err.message });
   }
 });
@@ -288,16 +281,9 @@ app.get('/api/questions/:id', async (req, res) => {
     if (!question) return res.status(404).json({ message: 'Question not found' });
     res.json(question);
   } catch (err) {
-    console.error('Error in GET /api/questions/:id:', err);
     res.status(500).json({ message: err.message });
   }
 });
-
-// Local development server (remove or comment out for Vercel)
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
-}
 
 // Export for Vercel
 module.exports = app;

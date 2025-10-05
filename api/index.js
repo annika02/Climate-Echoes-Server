@@ -6,9 +6,19 @@ require('dotenv').config();
 
 const app = express();
 
+const url = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ltlwpj2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+
+mongoose.connect(url, {
+  serverSelectionTimeoutMS: 30000, // 30 seconds timeout
+})
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch((err) => console.error('❌ MongoDB connection error:', err.message));
+
+//root route
 app.get('/', (req, res) => {
   res.send('Welcome to Climate Echoes Server');
 });
+
 // Middleware
 app.use(cors({
   origin: 'http://localhost:5173', // Update to your deployed frontend URL in production
@@ -272,5 +282,5 @@ app.get('/api/questions/:id', async (req, res) => {
   }
 });
 
-// Export for Vercel (no app.listen)
+// Export for Vercel 
 module.exports = app;

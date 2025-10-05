@@ -39,7 +39,11 @@ app.use(async (req, res, next) => {
 
 // Middleware
 app.use(cors({
-  origin: 'http://localhost:5173',
+  origin: [
+    'http://localhost:5173',
+    'https://nasa-space-app-25.web.app',
+    'https://nasa-space-app-25.firebaseapp.com',
+  ],
   methods: ['GET', 'POST', 'PATCH'],
   allowedHeaders: ['Content-Type'],
 }));

@@ -6,6 +6,9 @@ require('dotenv').config();
 
 const app = express();
 
+app.get('/', (req, res) => {
+  res.send('Welcome to Climate Echoes Server');
+});
 // Middleware
 app.use(cors({
   origin: 'http://localhost:5173', // Update to your deployed frontend URL in production

@@ -6,8 +6,7 @@ require('dotenv').config();
 
 const app = express();
 
-const url = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.xodwjpe.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-
+const url = process.env.MONGODB_URI;
 mongoose.connect(url, {
   serverSelectionTimeoutMS: 5000,
   maxPoolSize: 10, // Allow more concurrent connections

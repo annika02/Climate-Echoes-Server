@@ -8,26 +8,25 @@ const app = express();
 
 const url = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ltlwpj2.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
+// Connect asynchronously
 mongoose.connect(url, {
-  serverSelectionTimeoutMS: 30000, // 30 seconds timeout
-})
-  .then(() => console.log('✅ Connected to MongoDB'))
-  .catch((err) => console.error('❌ MongoDB connection error:', err.message));
+  serverSelectionTimeoutMS: 5000, // Reduced for faster failure detection
+}).catch(err => console.error('❌ MongoDB connection error:', err.message));
 
-//root route
+// Root route
 app.get('/', (req, res) => {
   res.send('Welcome to Climate Echoes Server');
 });
 
 // Middleware
 app.use(cors({
-  origin: 'http://localhost:5173', // Update to your deployed frontend URL in production
+  origin: 'http://localhost:5173',
   methods: ['GET', 'POST', 'PATCH'],
   allowedHeaders: ['Content-Type'],
 }));
 app.use(express.json());
 
-// Input validation middleware
+// Input validation middleware (unchanged)
 const validatePost = [
   body('title').trim().notEmpty().withMessage('Title is required'),
   body('content').trim().notEmpty().withMessage('Content is required'),
@@ -104,7 +103,7 @@ const questionSchema = new mongoose.Schema({
 });
 const Question = mongoose.model('Question', questionSchema);
 
-// API Routes
+// API Routes (unchanged)
 app.get('/api/posts', async (req, res) => {
   try {
     const posts = await Post.find();
@@ -282,5 +281,11 @@ app.get('/api/questions/:id', async (req, res) => {
   }
 });
 
-// Export for Vercel 
+// Local development server (remove or comment out for Vercel)
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+}
+
+// Export for Vercel
 module.exports = app;

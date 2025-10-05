@@ -1,4 +1,4 @@
-const express = require('express');
+const express = require('mongoose');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const { body, validationResult } = require('express-validator');
@@ -8,16 +8,24 @@ const app = express();
 
 const url = process.env.MONGODB_URI || `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.ltlwpj2.mongodb.net/climate_echoes?retryWrites=true&w=majority&appName=Cluster0`;
 
-mongoose.connect(url, {
-  serverSelectionTimeoutMS: 10000,
-  maxPoolSize: 10,
-  socketTimeoutMS: 45000,
-  connectTimeoutMS: 30000,
-}).catch(err => console.error('❌ Initial MongoDB connection error:', err));
+const connectDB = async () => {
+  try {
+    await mongoose.connect(url, {
+      serverSelectionTimeoutMS: 10000,
+      maxPoolSize: 10,
+      socketTimeoutMS: 45000,
+      connectTimeoutMS: 30000,
+    });
+    console.log('✅ Connected to MongoDB');
+  } catch (err) {
+    console.error('❌ Initial MongoDB connection error:', err);
+    setTimeout(connectDB, 5000); // Retry after 5 seconds
+  }
+};
+connectDB();
 
 const db = mongoose.connection;
 db.on('error', (err) => console.error('❌ MongoDB connection error:', err));
-db.once('open', () => console.log('✅ Connected to MongoDB'));
 db.on('disconnected', () => console.warn('⚠️ MongoDB disconnected, attempting to reconnect...'));
 
 app.use(async (req, res, next) => {
@@ -39,12 +47,10 @@ app.use(async (req, res, next) => {
   }
 });
 
-// Root route
 app.get('/', (req, res) => {
   res.send('Welcome to Climate Echoes Server');
 });
 
-// CORS
 const allowedOrigins = ['http://localhost:5173', 'https://climate-echoes.vercel.app'];
 app.use(cors({
   origin: (origin, callback) => {
@@ -59,7 +65,6 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Input validation middleware
 const validatePost = [
   body('title').trim().notEmpty().withMessage('Title is required'),
   body('content').trim().notEmpty().withMessage('Content is required'),
@@ -81,7 +86,6 @@ const validateAnswer = [
   body('author').optional().isString().withMessage('Author must be a string'),
 ];
 
-// Global error handling
 app.use((err, req, res, next) => {
   console.error('Server Error:', {
     message: err.message,
@@ -95,7 +99,6 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Post Schema
 const postSchema = new mongoose.Schema({
   title: { type: String, required: [true, 'Title is required'] },
   content: { type: String, required: [true, 'Content is required'] },
@@ -114,7 +117,6 @@ const postSchema = new mongoose.Schema({
 });
 const Post = mongoose.model('Post', postSchema);
 
-// Question Schema
 const questionSchema = new mongoose.Schema({
   question: { type: String, required: [true, 'Question is required'] },
   author: { type: String, required: [true, 'Author is required'], default: 'Anonymous' },
@@ -136,7 +138,6 @@ const questionSchema = new mongoose.Schema({
 });
 const Question = mongoose.model('Question', questionSchema);
 
-// API Routes
 app.get('/api/test-db', async (req, res) => {
   try {
     const readyState = mongoose.connection.readyState;
